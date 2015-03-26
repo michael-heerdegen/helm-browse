@@ -1,5 +1,43 @@
 ;; multi-purpose searching framework for helm  -*- lexical-binding: t -*-
 
+;; Copyright (C) 2015 Michael Heerdegen
+
+;; Author: Michael Heerdegen <michael_heerdegen@web.de>
+;; Maintainer: Michael Heerdegen <michael_heerdegen@web.de>
+;; Created: 2015_03_26
+;; URL: https://github.com/michael-heerdegen/helm-browse
+;; Keywords: matching
+;; Compatibility: GNU Emacs >=24
+;; Version: 0.1
+;; Package-Requires: ()
+
+
+;; GNU Emacs is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; GNU Emacs is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with GNU Emacs.  If not, see <http://www.gnu.org/licenses/>.
+
+
+;;; Commentary:
+;;
+;; The prototype of a multi-purpose searching framework for helm
+;;
+;; To do:
+;;
+;; - implement multi file searching
+;; - implement match editing à la wgrep
+
+
+;;; Code:
+
 
 (require 'generator)
 (require 'iterators)
