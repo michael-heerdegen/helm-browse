@@ -79,6 +79,9 @@ A dired search and marking tool.
 
   + "-h=n" "-h>n" "-h<n" matches N against number of hardlinks
 
+  + All flags can be negated, e.g. "!-d" matches anything that is not
+  a directory etc.
+
 
 ### helm-browse-w3m-links
 
