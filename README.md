@@ -13,7 +13,11 @@ Multi-file searches and editing of matches are not yet implemented.
 
 ## Requirements
 
-Emacs 25.  https://github.com/michael-heerdegen/iterators.el
+Emacs 25.
+
+iterators.el, available from Gnu Elpa or from here:
+
+  https://github.com/michael-heerdegen/iterators.el
 
 
 ## Installation
