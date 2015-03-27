@@ -77,11 +77,15 @@
 		     ,todo  nil)
 	       ,result)))))
 
-(defun helm-browse--search-forward-regexp (&rest args)
-  "Like `search-forward-regexp' but catch `invalid-regexp' errors."
-  (condition-case nil
-      (apply #'search-forward-regexp args)
-    (invalid-regexp nil)))
+(defun helm-browse--search-forward-regexp (regexp &rest args)
+  "`search-forward-regexp' but respect `helm-case-fold-search' and catch `invalid-regexp' errors."
+  (let ((case-fold-search (let ((case-fold-search nil))
+                            (pcase helm-case-fold-search
+                              (`smart (not (string-match-p "[[:upper:]]" regexp)))
+                              (_      case-fold-search)))))
+    (condition-case nil
+        (apply #'search-forward-regexp regexp args)
+      (invalid-regexp nil))))
 
 (defun helm-browse-after-selection-move ()
   (when (memq this-command '(helm-next-line
