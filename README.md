@@ -13,7 +13,7 @@ Multi-file searches and editing of matches are not yet implemented.
 
 ## Requirements
 
-https://github.com/michael-heerdegen/iterators.el
+Emacs 25.  https://github.com/michael-heerdegen/iterators.el
 
 
 ## Installation
