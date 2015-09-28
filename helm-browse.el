@@ -154,7 +154,7 @@ when there are no more matches."
     )
 
   (let ((subpatterns (split-string
-                      (replace-regexp-in-string helm-mp-space-regexp "\000\000" pattern)
+                      (replace-regexp-in-string helm-mm-space-regexp "\000\000" pattern)
                       " " t)))
     (setq helm-browse-parsed-pattern
           (mapcar
