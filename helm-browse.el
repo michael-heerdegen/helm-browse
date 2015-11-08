@@ -1,4 +1,4 @@
-;; multi-purpose searching framework for helm  -*- lexical-binding: t -*-
+;;; helm-browse.el --- Multi-purpose searching framework for helm  -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2015 Michael Heerdegen
 
@@ -7,10 +7,11 @@
 ;; Created: 2015_03_26
 ;; URL: https://github.com/michael-heerdegen/helm-browse
 ;; Keywords: matching
-;; Compatibility: GNU Emacs >=24
+;; Compatibility: GNU Emacs 25
 ;; Version: 0.1
-;; Package-Requires: ()
+;; Package-Requires: ((emacs "25") (helm "0") (stream "0"))
 
+;; This file is not part of GNU Emacs.
 
 ;; GNU Emacs is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -28,11 +29,12 @@
 
 ;;; Commentary:
 ;;
-;; The prototype of a multi-purpose searching framework for helm
+;; A multi-purpose searching framework for Helm
 ;;
 ;; To do:
 ;;
 ;; - implement multi file searching
+;; 
 ;; - implement match editing à la wgrep
 
 
