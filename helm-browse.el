@@ -44,6 +44,7 @@
 
 (require 'generator)
 (require 'iterators)
+(require 'rx)
 
 
 ;;;; Configuration stuff
@@ -505,7 +506,9 @@ when there are no more matches."
 (defun helm-browse-make-outline-source ()
   (helm-browse-make-source-spec
    "Browse headlines"
-   (lambda () (concat outline-regexp ".*$"))
+   (lambda () (list
+          (rx-to-string `(and (regexp ,outline-regexp) (* space) (group (* any) eol)))
+          1))
    nil
    '((multiline))))
 
@@ -761,9 +764,8 @@ when there are no more matches."
 (defvar helm-source-browse-comint-inputs
   (helm-browse-make-source-spec
    "Browse prompts"
-   (lambda () (let ((input-line-rx (concat comint-prompt-regexp "\\(.*\\)")))
-           (lambda () (and (search-forward-regexp input-line-rx nil t)
-                      (list (match-beginning 1) (match-end 1))))))
+   (lambda () (list (rx-to-string `(and (regexp ,comint-prompt-regexp) (* space) (group (* any) eol)))
+               1))
    nil
    `((history . ,(defvar helm-browse-comint-history '())))))
 
