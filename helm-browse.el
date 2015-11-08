@@ -40,10 +40,13 @@
 
 ;;; Code:
 
+;;;; Requirements
 
 (require 'generator)
 (require 'iterators)
 
+
+;;;; Configuration stuff
 
 (defgroup helm-browse nil
   "Doc..."
@@ -64,7 +67,7 @@
   "Doc..." :group 'helm-browse)
 
 
-;; underlying stuff
+;;;; underlying stuff
 
 (defmacro helm-browse--delay-expression (expr)
   ;;  Return a delayed object evaluating EXPR.
@@ -493,7 +496,7 @@ when there are no more matches."
     (define-key map [(control ?s)] #'helm-browse-goto-next-match)
     map))
 
-;; User stuff
+;;;; User stuff
 
 (defun helm-browse-make-outline-source ()
   (helm-browse-make-source-spec
@@ -507,7 +510,7 @@ when there are no more matches."
   (helm :sources (helm-browse-make-outline-source) :buffer "*helm browse outline*"))
 
 
-;; text properties
+;;;; text properties
 
 (defun helm-browse-text-prop-definer (prop check find-next)
   (lambda () (let ((beg (if (funcall check (point) prop)
@@ -539,7 +542,7 @@ when there are no more matches."
   (helm :sources (helm-browse-char-property-source 'diff-hl-hunk)))
 
 
-;; Dired
+;;;; Dired
 
 (defun helm-browse-search-forward-dired (regexp)
   (let ((match nil))
@@ -717,7 +720,7 @@ when there are no more matches."
   (helm :sources helm-source-browse-dired :buffer "*helm browse dired*"))
 
 
-;; w3m, eww
+;;;; w3m, eww
 
 (defvar helm-source-w3m-links
   (helm-browse-make-source-spec
@@ -749,7 +752,7 @@ when there are no more matches."
   (helm :sources helm-source-eww-links :buffer "*helm browse eww*"))
 
 
-;; comint
+;;;; comint
 
 (defvar helm-source-browse-comint-inputs
   (helm-browse-make-source-spec
@@ -764,6 +767,7 @@ when there are no more matches."
   (interactive)
   (helm :sources helm-source-browse-comint-inputs :buffer "*helm browse comint*"))
 
+;;;; proced
 
 ;; Proced: use proced-pid text property, und schlage in
 ;; proced-process-alist nach.
