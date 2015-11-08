@@ -943,6 +943,7 @@ Used as third argument of `helm-browse-hunk-gen' in
 (provide 'helm-browse)
 
 
+
 ;;;; * File Local Vars
 ;;; Local variables: ***
 ;;; byte-compile-warnings: (not noruntime) ***
