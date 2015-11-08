@@ -118,15 +118,13 @@ right after the upper bound from the last found hunk.  If
 FUN-OR-REGEXP is a function, calling it must either return a
 list (start end) indicating the bounds of the next hunk, or nil
 when there are no more matches."
-  (let ((searcher (cond ((stringp fun-or-regexp)
-                         (lambda () (and (helm-browse--search-forward-regexp fun-or-regexp end t)
-                                    (list (match-beginning 0) (match-end 0)))))
-                        ((functionp fun-or-regexp) fun-or-regexp)
-                        ((listp fun-or-regexp)
-                         (pcase-let ((`(,regexp ,submatch) fun-or-regexp))
-                           (lambda () (and (helm-browse--search-forward-regexp regexp end t)
-                                      (list (match-beginning submatch) (match-end submatch))))))
-                        (t (error "Bad argument"))))
+  (let ((searcher
+         (pcase-exhaustive fun-or-regexp
+           ((pred stringp) (lambda () (and (helm-browse--search-forward-regexp fun-or-regexp end t)
+                                      (list (match-beginning 0) (match-end 0)))))
+           ((pred functionp) fun-or-regexp)
+           (`(,regexp ,submatch) (lambda () (and (helm-browse--search-forward-regexp regexp end t)
+                                            (list (match-beginning submatch) (match-end submatch)))))))
         (opoint (point))   (done nil)
         (current-bounds (list (1- beg) (1- beg)))   new-bounds)
     (while (not done)
