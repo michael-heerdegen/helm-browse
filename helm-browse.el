@@ -711,7 +711,7 @@ when there are no more matches."
                ("Mark (prefix: choose marker char)" . helm-browse-dired-mark)
                ("Unmark"                            . helm-browse-dired-unmark)))
     (keymap . ,helm-browse-dired-map)
-    (history . helm-browse-dired-history)
+    (history . ,(defvar helm-browse-dired-history '()))
     (cleanup . helm-browse-restore-hooks))
   "Browse dired.")
 
@@ -729,7 +729,7 @@ when there are no more matches."
                              nil
                            (list (point) (next-single-property-change
                                           (point) 'w3m-anchor-sequence)))))
-   nil '((history . helm-browse-w3m-history))))
+   nil `((history . ,(defvar helm-browse-w3m-history '())))))
 
 (defvar helm-source-eww-links
   (helm-browse-make-source-spec
@@ -741,7 +741,7 @@ when there are no more matches."
                    (goto-char skip)
                    (list (point) (next-property-change (point)))))))
    nil
-   '((history . helm-browse-eww-history))))
+   `((history . ,(defvar helm-browse-eww-history '())))))
 
 (defun helm-browse-w3m-links ()
   (interactive)
@@ -761,7 +761,7 @@ when there are no more matches."
            (lambda () (and (search-forward-regexp input-line-rx nil t)
                       (list (match-beginning 1) (match-end 1))))))
    nil
-   '((history . helm-browse-comint-history))))
+   `((history . ,(defvar helm-browse-comint-history '())))))
 
 (defun helm-browse-comint-inputs ()
   (interactive)
@@ -822,7 +822,7 @@ when there are no more matches."
    '((action . (("Go there" . helm-browse-simple-goto)
                 ("Mark"     . helm-browse-proced-mark)
                 ("Unmark"   . helm-browse-proced-unmark)))
-     (history . helm-browse-proced-history))))
+     (history . ,(defvar helm-browse-proced-history '())))))
 
 (defun helm-browse-proced ()
   (interactive)
@@ -924,7 +924,7 @@ Used as third argument of `helm-browse-hunk-gen' in
     (action . (("Go there" . helm-browse-default-goto)))
     (resume . helm-browse-resume)
     (keymap . ,helm-browse-default-map)
-    (history . helm-browse-history)
+    (history . ,(defvar helm-browse-lines-input-history '()))
     (cleanup . helm-browse-restore-hooks)))
 
 (defun helm-browse-lines ()
