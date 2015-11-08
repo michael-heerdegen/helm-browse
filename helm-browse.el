@@ -57,13 +57,13 @@
   '((t (:inherit 'match)))
   "Doc..." :group 'helm-browse)
 
-(defface helm-browse-this-cand
-  '((t (:inherit 'helm-selection)))
+(defface helm-browse-this-cand '()
+  ;; '((t (:inherit 'helm-selection)))
   "Doc..." :group 'helm-browse)
 
-(defface helm-browse-cand-region
-  '((((background light)) :background "gray50")
-    (t (:background "#173719")))
+(defface helm-browse-cand-region '()
+  ;; '((((background light)) :background "gray50")
+  ;;   (t (:background "#173719")))
   "Doc..." :group 'helm-browse)
 
 
