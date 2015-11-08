@@ -825,7 +825,7 @@ when there are no more matches."
    "Browse Proced"
    (lambda () "^.+$")
    helm-browse-proced-matcher
-   '((action . (("Go there" . helm-browse-simple-goto)
+   `((action . (("Go there" . helm-browse-simple-goto)
                 ("Mark"     . helm-browse-proced-mark)
                 ("Unmark"   . helm-browse-proced-unmark)))
      (history . ,(defvar helm-browse-proced-history '())))))
