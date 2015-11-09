@@ -44,6 +44,7 @@
 
 (require 'generator)
 (require 'iterators)
+(require 'thunk)
 (require 'rx)
 
 
@@ -69,19 +70,6 @@
 
 
 ;;;; underlying stuff
-
-(defmacro helm-browse--delay-expression (expr)
-  ;;  Return a delayed object evaluating EXPR.
-  ;; `funcall' the return value to force evaluation.  Successive
-  ;; `funcall's will just return the same result without evaluating
-  ;; EXPR again.
-  (let ((todo   (make-symbol "todo"))
-	(result (make-symbol "result")))
-    `(let (,result (,todo (lambda () ,expr)))
-       (lambda () (if (not ,todo) ,result
-	       (setq ,result (funcall ,todo)
-		     ,todo  nil)
-	       ,result)))))
 
 (defun helm-browse--search-forward-regexp (regexp &rest args)
   "`search-forward-regexp' but respect `helm-case-fold-search' and catch `invalid-regexp' errors."
@@ -604,26 +592,26 @@ when there are no more matches."
       (dired-move-to-filename)
       (let* ((file-in-buffer (dired-get-filename 'verbatim t))
              (file-abs       (dired-get-filename nil       t))
-             (symlink?       (helm-browse--delay-expression (file-symlink-p   file-abs)))
-             (directory?     (helm-browse--delay-expression (file-directory-p file-abs)))
-             (regular?       (helm-browse--delay-expression (file-regular-p   file-abs)))
-             (attributes     (helm-browse--delay-expression (file-attributes  file-abs)))
-             (links          (helm-browse--delay-expression (file-nlinks      file-abs)))
-             (size           (helm-browse--delay-expression (nth 7 (funcall attributes))))
-             (get-size    (lambda (s)
-                               (let ((suffix nil))
-                                 (when (string-match "\\`\\(.*\\)\\([kKmMgGtT]\\)\\'" s)
-                                   (setq suffix (downcase (match-string 2 s))
-                                         s      (match-string 1 s)))
-                                 (* (if (and suffix (string= s ""))
-                                        1.0
-                                      (string-to-number s))
-                                    (pcase suffix
-                                      (`nil  1.0)
-                                      (`"k"  1000.0)
-                                      (`"m"  1000000.0)
-                                      (`"g"  1000000000.0)
-                                      (`"t"  1000000000000.0)))))))
+             (symlink?       (thunk-delay (file-symlink-p   file-abs)))
+             (directory?     (thunk-delay (file-directory-p file-abs)))
+             (regular?       (thunk-delay (file-regular-p   file-abs)))
+             (attributes     (thunk-delay (file-attributes  file-abs)))
+             (links          (thunk-delay (file-nlinks      file-abs)))
+             (size           (thunk-delay (nth 7 (thunk-force attributes))))
+             (get-size (lambda (s)
+                         (let ((suffix nil))
+                           (when (string-match "\\`\\(.*\\)\\([kKmMgGtT]\\)\\'" s)
+                             (setq suffix (downcase (match-string 2 s))
+                                   s      (match-string 1 s)))
+                           (* (if (and suffix (string= s ""))
+                                  1.0
+                                (string-to-number s))
+                              (pcase suffix
+                                (`nil  1.0)
+                                (`"k"  1000.0)
+                                (`"m"  1000000.0)
+                                (`"g"  1000000000.0)
+                                (`"t"  1000000000000.0)))))))
         (cl-every (lambda (descr)
                     (funcall (if (nth 1 descr) #'not #'identity)
                              (let ((case-fold-search
@@ -636,22 +624,22 @@ when there are no more matches."
                                  (`"-a" (string-match-p (nth 2 descr)  file-abs))
                                  (`"-l" (let ((choice (nth 2 descr)))
                                           (if (string= choice "")
-                                              (funcall symlink?)
-                                            (and (funcall symlink?)
+                                              (thunk-force symlink?)
+                                            (and (thunk-force symlink?)
                                                  (string-match-p choice (file-truename file-abs))))))
-                                 (`"-d" (funcall directory?))
-                                 (`"-r" (funcall regular?))
+                                 (`"-d" (thunk-force directory?))
+                                 (`"-r" (thunk-force regular?))
                                  (`"-m" (string-match-p
                                          (let ((choice (nth 2 descr)))
                                            (if (string= choice "") "[^ ]" (regexp-quote choice)))
                                          (buffer-substring (line-beginning-position)
                                                            (1+ (line-beginning-position)))))
-                                 (`"-s0" (= (funcall size) 0))
-                                 (`"-s>" (> (funcall size) (funcall get-size (nth 2 descr))))
-                                 (`"-s<" (< (funcall size) (funcall get-size (nth 2 descr))))
-                                 (`"-h="   (=  (funcall links) (string-to-number (nth 2 descr))))
-                                 (`"-h>"  (>  (funcall links) (string-to-number (nth 2 descr))))
-                                 (`"-h<"  (<  (funcall links) (string-to-number (nth 2 descr))))))))
+                                 (`"-s0" (= (thunk-force size) 0))
+                                 (`"-s>" (> (thunk-force size) (funcall get-size (nth 2 descr))))
+                                 (`"-s<" (< (thunk-force size) (funcall get-size (nth 2 descr))))
+                                 (`"-h="   (=  (thunk-force links) (string-to-number (nth 2 descr))))
+                                 (`"-h>"  (>  (thunk-force links) (string-to-number (nth 2 descr))))
+                                 (`"-h<"  (<  (thunk-force links) (string-to-number (nth 2 descr))))))))
                   (let ((parsed-pattern (helm-browse-parse-pattern helm-pattern
                                                                    '("-l" "-d" "-a" "-m" "-r"
                                                                      "-s0" "-s>" "-s<"
