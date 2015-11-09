@@ -447,12 +447,12 @@ when there are no more matches."
 (defun helm-browse-make-source-spec (name domain-definer &optional matcher alist)
   (let* ((cache (make-symbol "cache"))
          (defaults `((name . ,name)
-                     (init  (lambda ()
-                              (with-helm-current-buffer
-                                (setq helm-browse-orig-buffer-pos (point)
-                                      helm-browse-buffer-mod-tick (buffer-chars-modified-tick))
-                                (helm-browse-init-cache (funcall ',domain-definer) ',cache)
-                                (helm-browse-prepair-hooks))))
+                     (init . ,(lambda ()
+                                (with-helm-current-buffer
+                                  (setq helm-browse-orig-buffer-pos (point)
+                                        helm-browse-buffer-mod-tick (buffer-chars-modified-tick))
+                                  (helm-browse-init-cache (funcall domain-definer) cache)
+                                  (helm-browse-prepair-hooks))))
                      (candidates . ,(helm-browse-make-cand-lister cache matcher))
                      (candidate-number-limit . 999)
                      (volatile) (match . identity) (nohighlight) (requires-pattern . 1)
