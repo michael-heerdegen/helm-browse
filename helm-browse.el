@@ -233,6 +233,7 @@ when there are no more matches."
         (delete-overlay ol)))))
 
 (defvar helm-browse-match-region-overlay nil)
+
 (defvar helm-browse-highlight-match-overlays '())
 
 (defvar helm-browse-highlight-cands-overlays '())
@@ -770,6 +771,7 @@ when there are no more matches."
 (defun helm-browse-comint-inputs ()
   (interactive)
   (helm :sources helm-source-browse-comint-inputs :buffer "*helm browse comint*"))
+
 
 ;;;; proced
 
