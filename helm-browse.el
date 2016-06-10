@@ -1,4 +1,4 @@
-;;; helm-browse.el --- Multi-purpose searching framework for helm  -*- lexical-binding: t -*-
+;;; helm-browse.el --- A multi-purpose searching framework   -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2015 Michael Heerdegen
 
@@ -9,7 +9,7 @@
 ;; Keywords: matching
 ;; Compatibility: GNU Emacs 25
 ;; Version: 0.1
-;; Package-Requires: ((emacs "25") (helm "0") (stream "0"))
+;; Package-Requires: ((emacs "25") (helm "0") (stream "2.2.1"))
 
 ;; This file is not part of GNU Emacs.
 
@@ -31,10 +31,15 @@
 ;;
 ;; A multi-purpose searching framework for Helm
 ;;
-;; To do:
+;; To do/ Bugs:
+;;
+;; - Sometimes makes Emacs crash.
+;;
+;; - make resuming from a different buffer do something useful
+;; (currently, it's just broken)
 ;;
 ;; - implement multi file searching
-;; 
+;;
 ;; - implement match editing à la wgrep
 
 
@@ -42,8 +47,8 @@
 
 ;;;; Requirements
 
-(require 'generator)
-(require 'iterators)
+(require 'seq)
+(require 'stream)
 (require 'thunk)
 (require 'rx)
 
@@ -55,8 +60,12 @@
   :group 'matching
   :prefix "helm-browse")
 
-(defface helm-browse-highlight-match
-  '((t (:inherit 'match)))
+(defface helm-browse-match
+  '((t (:inherit 'lazy-highlight)))
+  "Doc...")
+
+(defface helm-browse-this-match
+  '((t (:inherit 'isearch)))
   "Doc...")
 
 (defface helm-browse-this-cand '()
@@ -71,14 +80,14 @@
 
 ;;;; underlying stuff
 
-(defun helm-browse--search-forward-regexp (regexp &rest args)
+(defun helm-browse--search-forward-regexp (regexp &optional bound noerror count)
   "`search-forward-regexp' but respect `helm-case-fold-search' and catch `invalid-regexp' errors."
   (let ((case-fold-search (let ((case-fold-search nil))
                             (pcase helm-case-fold-search
                               (`smart (not (string-match-p "[[:upper:]]" regexp)))
                               (_      case-fold-search)))))
     (condition-case nil
-        (apply #'search-forward-regexp regexp args)
+        (search-forward-regexp regexp bound noerror count)
       (invalid-regexp nil))))
 
 (defun helm-browse-after-selection-move ()
@@ -96,16 +105,20 @@
   (remove-hook 'helm-after-update-hook #'helm-browse-move-to-first-cand-after-point)
   (remove-hook 'helm-move-selection-after-hook #'helm-browse-after-selection-move))
 
-(iter-defun helm-browse-hunk-gen (beg end fun-or-regexp)
-  "Return a generator for hunks matching text according to FUN-OR-REGEXP.
-The search will be bound to the region of text between BEG and
-END.  FUN-OR-REGEXP is either a regexp or a function.
+(defun helm-browse-hunk-stream (beg end fun-or-regexp)
+  "Create a stream of matches of FUN-OR-REGEXP between BEG and END.
+The stream elements are lists of two elements:
 
-Whenever this generator is be called, it will first move point
-right after the upper bound from the last found hunk.  If
-FUN-OR-REGEXP is a function, calling it must either return a
-list (start end) indicating the bounds of the next hunk, or nil
-when there are no more matches."
+ (match-beg match-end).
+
+FUN-OR-REGEXP can either be
+
+  - a regexp
+  - a list (REGEXP SUBMATCH)
+  - a function accepting zero arguments that does not depend on helm-current-pattern.
+
+If it is a function, a call should either return the first match after
+point in the current buffer in the form (match-beg match-end), or nil."
   (let ((searcher
          (pcase-exhaustive fun-or-regexp
            ((pred stringp) (lambda () (and (helm-browse--search-forward-regexp fun-or-regexp end t)
@@ -113,25 +126,35 @@ when there are no more matches."
            ((pred functionp) fun-or-regexp)
            (`(,regexp ,submatch) (lambda () (and (helm-browse--search-forward-regexp regexp end t)
                                             (list (match-beginning submatch) (match-end submatch)))))))
-        (opoint (point))   (done nil)
-        (current-bounds (list (1- beg) (1- beg)))   new-bounds)
-    (while (not done)
-      (let ((inhibit-quit t)) ;protect block from unwinding
-        (goto-char (1+ (nth 1 current-bounds)))
-        (setq new-bounds (funcall searcher))
-        (cond
-         ((or (not new-bounds) (>  (nth 1 current-bounds)    end))
-          (setq done t))
-         ((<= (nth 0 new-bounds) (nth 1 current-bounds))
-          (message "Error: search didn't lead us forward")
-          (sit-for 2)
-          (setq done t))))
-      (goto-char opoint)
-      (unless done (iter-yield (setq current-bounds new-bounds))))))
+        bounds new-bounds)
+    (let ((loop (lambda () (save-excursion
+                        (cl-callf or bounds (list (1- beg) (1- beg)))
+                        (if (>= (nth 1 bounds) end)
+                            'gen-done
+                          (goto-char (1+ (nth 1 bounds)))
+                          (setq new-bounds (funcall searcher))
+                          (cond
+                           ((memq new-bounds (list nil 'gen-done)) 'gen-done)
+                           ((eq new-bounds 'gen-skip)              'gen-skip)
+                           ((<= (nth 0 new-bounds) (nth 1 bounds))
+                            (message "Search didn't lead us forward")
+                            (sit-for 2)
+                            'gen-done)
+                           ((>  (nth 1 bounds)    end)             'gen-done)
+                           (t (setq bounds new-bounds))))))))
+      (letrec ((get-stream (lambda ()
+                             (let ((el (funcall loop)))
+                               (if (eq el 'gen-done)
+                                   (stream-empty)
+                                 (stream-cons el (funcall get-stream)))))))
+        (seq-filter (lambda (x) (not (eq x 'gen-skip)))
+                    (funcall get-stream))))))
 
-(defvar helm-browse-parsed-pattern nil)
+(defvar helm-browse--parsed-pattern nil
+  "Holds the last result of parsing the current `helm-pattern'.")
 
 (defun helm-browse-parse-pattern (pattern &optional flags)
+  "Parse PATTERN according to FLAGS and return the result."
   ;;$$$$$$ Should "!" and any flag be interchanged, like it is in `helm-buffers'?
   ;;$$$$$$ currently, no one flag must be prefix of another one
   '(Examples:
@@ -152,7 +175,7 @@ when there are no more matches."
   (let ((subpatterns (split-string
                       (replace-regexp-in-string helm-mm-space-regexp "\000\000" pattern)
                       " " t)))
-    (setq helm-browse-parsed-pattern
+    (setq helm-browse--parsed-pattern
           (mapcar
            (lambda (subpattern)
              (let ((negated nil) current-flag)
@@ -172,25 +195,39 @@ when there are no more matches."
            subpatterns))))
 
 (defun helm-browse-init-cache (domain-definer cache-var)
+  "In `helm-current-buffer' set symbol bound to `cache-var' to search stream.
+The stream is gotten by evaluating
+
+  \(helm-browse-hunk-stream (point-min) (point-max) domain-definer\)"
   (with-helm-current-buffer
     (set cache-var
-         (iterator-to-ilist
-          (helm-browse-hunk-gen (point-min) (point-max) domain-definer)))))
+         (helm-browse-hunk-stream (point-min) (point-max) domain-definer))))
+
+;; A matcher is a predicate that accepts one argument BOUNDS and
+;; decides whether the buffer substring defined by BOUNDS is a match
+;; according to the current value of `helm-pattern'.
 
 (defvar helm-browse-default-matcher
   (lambda (bounds)
     (let ((string (apply #'buffer-substring bounds)))
-      (cl-every (lambda (descr)
-                  (funcall (if (nth 1 descr) #'not #'identity)
-                           (let ((case-fold-search
-                                  (let ((case-fold-search nil))
-                                    (pcase helm-case-fold-search
-                                      (`smart (not (string-match-p "[[:upper:]]" (nth 2 descr))))
-                                      (_      case-fold-search)))))
-                             (string-match-p (nth 2 descr) string))))
-                (helm-browse-parse-pattern helm-pattern '())))))
+      (and
+       (string-match-p "." string) ;not only empty lines
+       (cl-every (lambda (descr)
+                   (funcall (if (nth 1 descr) #'not #'identity)
+                            (let ((case-fold-search
+                                   (let ((case-fold-search nil))
+                                     (pcase helm-case-fold-search
+                                       (`smart (not (string-match-p "[[:upper:]]" (nth 2 descr))))
+                                       (_      case-fold-search)))))
+                              (string-match-p (nth 2 descr) string))))
+                 (helm-browse-parse-pattern helm-pattern '()))))))
 
 (defun helm-browse-make-cand-lister (cache-var &optional matcher)
+  "Return a function returning the list of candidates
+according to CACHE-VAR and MATCHER - MATCHER defaults to the matcher
+stored in `helm-browse-default-matcher'.
+As side effect, the returned function shows a progress reporter in the
+minibuffer."
   (cl-callf or matcher helm-browse-default-matcher)
   (lambda ()
     (let* ((mb (window-buffer (active-minibuffer-window)))
@@ -199,30 +236,32 @@ when there are no more matches."
            (report-progress
             (lambda ()
               (ignore-errors
-                (let ((msg (format "  [%d]" (cl-incf nb-matches))))
+                (let ((msg (format "  [%d matches]" (cl-incf nb-matches))))
                   (overlay-put ol 'after-string msg)
                   (put-text-property 0 1 'cursor t msg)
                   (sit-for 0))))))
       (funcall report-progress)
       (unwind-protect (with-helm-current-buffer
                         (save-excursion
-                          (iterator-to-list
-                           (iterator-map
+                          (seq-into-sequence
+                           (seq-map
                             (lambda (range)
                               (funcall report-progress)
                               (concat
                                (format "%s-%s:: " (car range) (cadr range))
                                (apply #'buffer-substring-no-properties range)))
-                            (iterator-take
-                             (helm-candidate-number-limit (helm-get-current-source))
-                             (iterator-filter
+                            (seq-take
+                             (seq-filter
                               matcher
-                              (ilist-to-iterator (symbol-value cache-var))))))))
+                              (symbol-value cache-var))
+                             (helm-candidate-number-limit (helm-get-current-source)))))))
         (delete-overlay ol)))))
+
 
 (defvar helm-browse-match-region-overlay nil)
 
 (defvar helm-browse-highlight-match-overlays '())
+(defvar helm-browse-highlight-this-match-overlay nil)
 
 (defvar helm-browse-highlight-cands-overlays '())
 
@@ -239,15 +278,12 @@ when there are no more matches."
                'display  (list 'left-fringe 'right-triangle))))
 
 (defun helm-browse-highlight-matches (regexp)
-  
+
   (when (window-live-p (helm-window))
     (while-no-input
       (let* ((win   (get-buffer-window helm-current-buffer))
              (start (window-start win))
-             (end   (save-excursion
-                      (goto-char start)
-                      (forward-line (1+ (window-height win)))
-                      (point))))
+             (end   (window-end win)))
 
         ;; Candidate regions
 
@@ -267,7 +303,7 @@ when there are no more matches."
                     (setq last-cand-end cand-end)
                     (push (cons (get-text-property (point) 'begin) cand-end)
                           visible-regions))
-                  (backward-line 1))))
+                  (forward-line -1))))
             (let (cand-beg  (last-cand-beg -1))
               (save-excursion
                 (while (and (not (eobp))
@@ -285,44 +321,49 @@ when there are no more matches."
                     (overlay-put ov 'face 'helm-browse-cand-region)))
                 visible-regions)
 
-        
+
           ;; Regexp matches
 
           (when helm-browse-highlight-match-overlays
             (mapc #'delete-overlay helm-browse-highlight-match-overlays)
             (setq helm-browse-highlight-match-overlays nil))
 
-          (mapc (lambda (region)
-                  (let ((start (car region))
-                        (end   (cdr region)))
-                    (save-restriction
+          (save-excursion
+            (mapc (lambda (region)
+                    (let ((start (car region))
+                          (end   (cdr region)))
                       (unless (string= regexp "")
-                        (save-match-data
-                          (save-excursion
-                            (goto-char start)
+                        (save-restriction
+                          (narrow-to-region start end)
+                          (goto-char start)
+                          (save-match-data
                             (while (and (<= (point) end) (re-search-forward regexp end t))
                               (if (= (match-beginning 0) (match-end 0))
                                   (goto-char (1+ (match-end 0)))
                                 (let ((overlay (make-overlay (match-beginning 0) (match-end 0))))
-                                  (overlay-put overlay 'priority 1000)
+                                  (overlay-put overlay 'priority 500)
                                   (push overlay helm-browse-highlight-match-overlays)
-                                  (overlay-put overlay 'face 'helm-browse-highlight-match))
-                                (goto-char (match-end 0))))))))))
-                visible-regions))))))
+                                  (overlay-put overlay 'face 'helm-browse-match))
+                                (goto-char (match-end 0)))))))))
+                  visible-regions)))))))
+
+(defun helm-browse-remove-overlays (&optional buffer)
+  (with-current-buffer (or buffer (current-buffer))
+    (when helm-browse-match-region-overlay
+      (delete-overlay helm-browse-match-region-overlay)
+      (setq helm-browse-match-region-overlay nil))
+    (when helm-browse-highlight-match-overlays
+      (mapc #'delete-overlay helm-browse-highlight-match-overlays)
+      (setq helm-browse-highlight-match-overlays nil))
+    (when helm-browse-highlight-this-match-overlay
+      (delete-overlay helm-browse-highlight-this-match-overlay)
+      (setq helm-browse-highlight-this-match-overlay nil))
+    (when helm-browse-highlight-cands-overlays
+      (mapc #'delete-overlay helm-browse-highlight-cands-overlays)
+      (setq helm-browse-highlight-cands-overlays nil))))
 
 (defun helm-browse-ov-cleanup ()
-  (run-with-idle-timer
-   0.0 nil
-   (lambda ()
-     (when helm-browse-match-region-overlay
-       (delete-overlay helm-browse-match-region-overlay)
-       (setq helm-browse-match-region-overlay nil))
-     (when helm-browse-highlight-match-overlays
-       (mapc #'delete-overlay helm-browse-highlight-match-overlays)
-       (setq helm-browse-highlight-match-overlays nil))
-     (when helm-browse-highlight-cands-overlays
-      (mapc #'delete-overlay helm-browse-highlight-cands-overlays)
-      (setq helm-browse-highlight-cands-overlays nil)))))
+  (run-with-idle-timer 0.0 nil #'helm-browse-remove-overlays))
 
 (add-hook 'helm-cleanup-hook
           (defun helm-browse-cleanup-hook-fun ()
@@ -336,12 +377,11 @@ when there are no more matches."
   (interactive)
   (with-helm-window
     (if (helm-empty-buffer-p)
-        (progn
-          (when helm-browse-match-region-overlay
-            (delete-overlay helm-browse-match-region-overlay))
-          (mapc #'delete-overlay helm-browse-highlight-match-overlays)
-          (with-helm-current-buffer
-            (goto-char helm-browse-orig-buffer-pos)))
+        (with-helm-current-buffer
+          (set-window-point (get-buffer-window helm-current-buffer)
+                            (goto-char (setq helm-browse-current-pos
+                                             helm-browse-orig-buffer-pos)))
+          (helm-browse-remove-overlays))
       (goto-char (point-min))
       (forward-line 1)
       (let (buffer-pos)
@@ -350,7 +390,7 @@ when there are no more matches."
                            (or (not buffer-pos) ;separator
                                (< buffer-pos helm-browse-orig-buffer-pos))))
           (forward-line 1))
-        (when (eobp) (backward-line 1))
+        (when (eobp) (forward-line -1))
         (forward-line 0) ; Avoid scrolling right on long lines.
         (when (helm-pos-multiline-p)
           (helm-move--beginning-of-multiline-candidate))
@@ -386,7 +426,7 @@ when there are no more matches."
                                                   (nth 2 subpattern)
                                                 (regexp-quote (nth 2 subpattern)))
                                             nil))
-                                        helm-browse-parsed-pattern)))))
+                                        helm-browse--parsed-pattern)))))
     (if (null regexps)
         cands
       (mapcar (lambda (cand)
@@ -402,65 +442,113 @@ when there are no more matches."
                                                    (setq beg (match-beginning 0)))
                                                 0))
                                    (add-text-properties beg end '(face helm-match)))
-                                 do (goto-char (point-min))) 
+                                 do (goto-char (point-min)))
                         (buffer-string)))
                   (error nil)))
               cands))))
 
-(defun helm-browse-simple-goto (cand)
+(defun helm-browse-primitive-goto (cand)
   (string-match "^\\([0-9]+\\)-\\([0-9]+\\)::" cand)
   (let  ((start (string-to-number (match-string 1 cand)))
          (end   (string-to-number (match-string 2 cand))))
     (helm-goto-char start)
     (helm-browse-highlight-range start end)))
 
+(defun helm-browse--positive-regexp (parsed-pattern)
+  "Return the disjunction of all not negated normal regexps in PARSED-PATTERN."
+  (if-let ((regexps (delq nil
+                          (mapcar (lambda (subpattern)
+                                    (if (and (null (nth 1 subpattern))
+                                             (not (string= "" (nth 2 subpattern)))
+                                             (null (nth 0 subpattern)))
+                                        (nth 2 subpattern)
+                                      nil))
+                                  parsed-pattern))))
+      (mapconcat #'identity regexps "\\|")
+    ".+"))
+
 (defun helm-browse-default-goto (cand)
   (with-helm-current-buffer
     (string-match "^\\([0-9]+\\)-\\([0-9]+\\)::" cand)
     (let*  ((start   (string-to-number (match-string 1 cand)))
             (end     (string-to-number (match-string 2 cand)))
-            (regexps (delq nil
-                           (mapcar (lambda (subpattern)
-                                     (if (and (null (nth 1 subpattern))
-                                              (not (string= "" (nth 2 subpattern)))
-                                              (null (nth 0 subpattern)))
-                                         (nth 2 subpattern)
-                                       nil))
-                                   helm-browse-parsed-pattern)))
-            (regexp-to-highlight (if regexps (mapconcat #'identity regexps "\\|") ".+")))
+            (positive-regexp (helm-browse--positive-regexp helm-browse--parsed-pattern)))
       (let ((window-scroll-functions
              (cons (lambda (_win &rest _)
-                     (with-current-buffer helm-current-buffer
-                       (helm-browse-highlight-matches regexp-to-highlight)))
+                     (run-with-timer 0 nil
+                                     (lambda ()
+                                       (with-current-buffer helm-current-buffer
+                                         (helm-browse-highlight-matches positive-regexp)))))
                    window-scroll-functions)))
-        (set-window-point (get-buffer-window helm-current-buffer)
-                          (goto-char start))
+        (set-window-point
+         (get-buffer-window helm-current-buffer)
+         (setq helm-browse-current-pos
+               (save-restriction
+                 (narrow-to-region start end) ;e.g. regexp starting with ^ but START \= bol
+                 (goto-char start)
+                 (search-forward-regexp positive-regexp)
+                 (helm-browse-highlight-this-match (match-beginning 0) (match-end 0))
+                 (point))))
         (redisplay)
-        (setq helm-browse-current-pos (point))
         (helm-browse-highlight-range start end)
         (when helm-browse-force-highlighting-matches
-          (helm-browse-highlight-matches regexp-to-highlight))
+          (helm-browse-highlight-matches positive-regexp))
         ;; (when (window-live-p (helm-window))
         ;;   (run-hooks 'post-command-hook))
         ))))
 
-(defun helm-browse-make-source-spec (name domain-definer &optional matcher alist)
+(defun helm-browse-highlight-this-match (from to)
+  (if (overlayp helm-browse-highlight-this-match-overlay)
+      (move-overlay helm-browse-highlight-this-match-overlay
+                    from to)
+    (setq helm-browse-highlight-this-match-overlay
+          (make-overlay from to))
+    (overlay-put helm-browse-highlight-this-match-overlay 'face 'helm-browse-this-match)
+    (overlay-put helm-browse-highlight-this-match-overlay 'priority 1000)))
+
+(defun helm-browse-lines-goto-next-match (&rest _)
+  (interactive)
+  (let* ((regexp (helm-browse--positive-regexp helm-browse--parsed-pattern))
+         (opoint (with-helm-current-buffer (point))))
+    (unless (with-helm-current-buffer
+              (let ((end (with-helm-buffer (get-text-property (point) 'end))))
+                (when (helm-browse--search-forward-regexp regexp end t)
+                  (helm-browse-highlight-this-match (match-beginning 0) (match-end 0))
+                  (set-window-point
+                   (get-buffer-window helm-current-buffer)
+                   (setq helm-browse-current-pos (match-end 0)))
+                  t)))
+      (unless (with-helm-buffer (save-excursion (goto-char (overlay-end helm-selection-overlay))
+                                                (helm-end-of-source-p t)))
+        (helm-next-line)
+        (helm-browse-default-goto (helm-get-selection))))
+    (when (= (with-helm-current-buffer (point)) opoint)
+      ;; We were at the last match.  Go to the first
+        (helm-beginning-of-buffer)
+        (helm-browse-default-goto (helm-get-selection)))))
+
+(defun helm-browse-create-source (name get-domain-definer &optional matcher alist)
+  "Create a new \"helm-browse\" source according to the arguments."
   (let* ((cache (make-symbol "cache"))
          (defaults `((name . ,name)
                      (init . ,(lambda ()
                                 (with-helm-current-buffer
                                   (setq helm-browse-orig-buffer-pos (point)
                                         helm-browse-buffer-mod-tick (buffer-chars-modified-tick))
-                                  (helm-browse-init-cache (funcall domain-definer) cache)
+                                  (helm-browse-init-cache (funcall get-domain-definer) cache)
                                   (helm-browse-prepair-hooks))))
                      (candidates . ,(helm-browse-make-cand-lister cache matcher))
                      (candidate-number-limit . 999)
                      (volatile) (match . identity) (nohighlight) (requires-pattern . 1)
                      (no-matchplugin) (real-to-display . helm-browse-default-real-to-display)
                      (candidate-transformer . helm-browse-default-candidate-transformer)
-                     (action . (("Go there" . helm-browse-default-goto)))
+                     (action . (("Go there" . ,(lambda (_cand) (interactive)
+                                                 (with-helm-current-buffer
+                                                   (goto-char helm-browse-current-pos))))))
                      (resume . helm-browse-resume)
-                     (cleanup . helm-browse-restore-hooks))))
+                     (cleanup . helm-browse-restore-hooks)
+                     (keymap . ,helm-browse-default-map) ; does that DTRT?
+                     )))
     (cl-callf reverse defaults)
     (dolist (default defaults)
       (unless (assoc (car default) alist)
@@ -485,13 +573,35 @@ when there are no more matches."
 (defvar helm-browse-default-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map helm-map)
-    (define-key map [(control ?s)] #'helm-browse-goto-next-match)
+    (define-key map [(control ?s)] #'helm-browse-lines-goto-next-match)
     map))
 
-;;;; User stuff
+
+;;;; The sources and user commands
+
+(defun helm-browse-create-simple-source (name candidate-function)
+  `((name . ,name)
+    (init . ,(lambda ()
+               (with-helm-current-buffer
+                 (setq helm-browse-orig-buffer-pos (point)
+                       helm-browse-buffer-mod-tick (buffer-chars-modified-tick)
+                       helm-browse-current-pos nil)
+                 (helm-browse-prepair-hooks))))
+    (candidates . ,candidate-function)
+    (candidate-number-limit . 2500)
+    (update . helm-browse-update-function)
+    (volatile) (match . identity) (nohighlight) (requires-pattern . 0)
+    (multiline)
+    (no-matchplugin)
+    (real-to-display . helm-browse-default-real-to-display)
+    (candidate-transformer . helm-browse-default-candidate-transformer)
+    (resume . helm-browse-resume)
+    (action . (("Go there" . helm-browse-default-goto)))
+    (keymap . ,helm-browse-default-map)
+    (cleanup . helm-browse-restore-hooks)))
 
 (defun helm-browse-make-outline-source ()
-  (helm-browse-make-source-spec
+  (helm-browse-create-source
    "Browse headlines"
    (lambda () (list
           (rx-to-string `(and (regexp ,outline-regexp) (* space) (group (* any) eol)))
@@ -506,34 +616,47 @@ when there are no more matches."
 
 ;;;; text properties
 
-(defun helm-browse-text-prop-definer (prop check find-next)
-  (lambda () (let ((beg (if (funcall check (point) prop)
+(defun helm-browse-text-prop-domain-definer (prop check find-next &optional paragraphs)
+  (lambda () (let ((opoint (point))
+              (beg (if (funcall check (point) prop)
                        (point)
                      (funcall find-next (point) prop))))
           (when (and beg (= beg (point-max)))
             (setq beg nil))
-          (and beg (list beg (funcall find-next beg prop))))))
+          (and beg
+               (progn
+                 (goto-char beg)
+                 (if paragraphs
+                     (list (max (save-excursion (start-of-paragraph-text) (point))
+                                opoint)
+                           (max (save-excursion (end-of-paragraph-text) (point))
+                                (1+ opoint)))
+                   (list beg (funcall find-next beg prop))))))))
 
-(defun helm-browse-text-property-source (prop)
-  (helm-browse-make-source-spec
+(defun helm-browse-create-text-property-source (prop &optional paragraphs)
+  (helm-browse-create-source
    (format "Browse %s" prop)
-   (lambda () (helm-browse-text-prop-definer prop #'get-text-property #'next-single-property-change))
+   (lambda () (helm-browse-text-prop-domain-definer
+          prop #'get-text-property #'next-single-property-change
+          paragraphs))
    nil
    `((multiline)
      (keymap . ,helm-browse-default-map))))
 
-(defun helm-browse-char-property-source (prop)
-  (helm-browse-make-source-spec
+(defun helm-browse-create-char-property-source (prop &optional paragraphs)
+  (helm-browse-create-source
    (format "Browse %s" prop)
-   (lambda () (helm-browse-text-prop-definer prop #'get-char-property #'next-single-char-property-change))
+   (lambda () (helm-browse-text-prop-domain-definer
+          prop #'get-char-property #'next-single-char-property-change
+          paragraphs))
    nil
    `((multiline)
      (keymap . ,helm-browse-default-map))))
 
-(defun helm-browse-diff ()
-  (interactive)
+(defun helm-browse-diff (&optional arg)
+  (interactive "P")
   (require 'diff-hl)
-  (helm :sources (helm-browse-char-property-source 'diff-hl-hunk)))
+  (helm :sources (helm-browse-create-char-property-source 'diff-hl-hunk (not arg))))
 
 
 ;;;; Dired
@@ -552,7 +675,7 @@ when there are no more matches."
          (t (setq match (list file-beg (line-end-position)))))))
     match))
 
-(defun helm-browse-dired-make-gen ()
+(defun helm-browse-dired-make-stream ()
  (let* ((parsed-pattern (helm-browse-parse-pattern helm-pattern '("-l" "-d" "-a" "-m" "-r"
                                                                   "-s0" "-s>" "-s<"
                                                                   "-h=" "-h>" "-h<")))
@@ -569,21 +692,21 @@ when there are no more matches."
                   '(".+"))
                  "\\|"))
         (searcher (lambda () (helm-browse-search-forward-dired regexp))))
-   (helm-browse-hunk-gen (point-min) (point-max) searcher)))
+   (helm-browse-hunk-stream (point-min) (point-max) searcher)))
 
 (defun helm-browse-dired-get-cands ()
   (with-helm-current-buffer
-    (iterator-to-list
-     (iterator-map
+    (seq-into-sequence
+     (seq-map
       (lambda (range)
         (concat
          (format "%s-%s:: " (car range) (cadr range))
          (apply #'buffer-substring-no-properties range)))
-      (iterator-take
-       (helm-candidate-number-limit (helm-get-current-source))
-       (iterator-filter
+      (seq-take
+       (seq-filter
         helm-browse-dired-matcher
-        (helm-browse-dired-make-gen)))))))
+        (helm-browse-dired-make-stream))
+       (helm-candidate-number-limit (helm-get-current-source)))))))
 
 (defvar helm-browse-dired-matcher
   (lambda (bounds)
@@ -717,7 +840,7 @@ when there are no more matches."
 ;;;; w3m, eww
 
 (defvar helm-source-w3m-links
-  (helm-browse-make-source-spec
+  (helm-browse-create-source
    "Browse w3m links"
    (lambda () (lambda () (if (not (w3m-goto-next-anchor))
                              nil
@@ -726,7 +849,7 @@ when there are no more matches."
    nil `((history . ,(defvar helm-browse-w3m-history '())))))
 
 (defvar helm-source-eww-links
-  (helm-browse-make-source-spec
+  (helm-browse-create-source
    "Browse eww links"
    (lambda () (lambda () (let ((skip (text-property-any (point) (point-max) 'help-echo nil)))
                  (if (not (setq skip (text-property-not-all skip (point-max)
@@ -749,7 +872,7 @@ when there are no more matches."
 ;;;; comint
 
 (defvar helm-source-browse-comint-inputs
-  (helm-browse-make-source-spec
+  (helm-browse-create-source
    "Browse prompts"
    (lambda () (list (rx-to-string `(and (regexp ,comint-prompt-regexp) (* space) (group (* any) eol)))
                1))
@@ -809,11 +932,11 @@ when there are no more matches."
      (helm-marked-candidates))))
 
 (defvar helm-source-browse-proced
-  (helm-browse-make-source-spec
+  (helm-browse-create-source
    "Browse Proced"
    (lambda () "^.+$")
    helm-browse-proced-matcher
-   `((action . (("Go there" . helm-browse-simple-goto)
+   `((action . (("Go there" . helm-browse-primitive-goto)
                 ("Mark"     . helm-browse-proced-mark)
                 ("Unmark"   . helm-browse-proced-unmark)))
      (history . ,(defvar helm-browse-proced-history '())))))
@@ -827,23 +950,23 @@ when there are no more matches."
   (lambda ()
     (with-helm-current-buffer
       (save-excursion
-        (iterator-to-list
-         (iterator-map
+        (seq-into-sequence
+         (seq-map
           (lambda (range)
             (concat
              (format "%s-%s:: " (car range) (cadr range))
              (apply #'buffer-substring-no-properties range)))
-          (iterator-take
-           (helm-candidate-number-limit (helm-get-current-source))
-           (helm-browse-lines-make-gen
+          (seq-take
+           (helm-browse-lines-make-stream
             (point-min) (point-max)
-            helm-pattern)))))))
+            helm-pattern)
+           (helm-candidate-number-limit (helm-get-current-source))))))))
   "Candidate lister for `helm-source-browse-lines'.")
 
 (defun helm-browse-lines-make-search-fun (include-patterns exclude-patterns get-upper-bound)
   "Return a search function according to the arguments.
-Used as third argument of `helm-browse-hunk-gen' in
-`helm-browse-lines-make-gen'."
+Used as third argument of `helm-browse-hunk-stream' in
+`helm-browse-lines-make-stream'."
   (let ((any-include-pattern (mapconcat #'identity include-patterns "\\|"))
         (any-exclude-pattern (and exclude-patterns
                                   (mapconcat #'identity exclude-patterns "\\|"))))
@@ -870,8 +993,8 @@ Used as third argument of `helm-browse-hunk-gen' in
             (forward-line)))
         done))))
 
-(defun helm-browse-lines-make-gen (beg end pattern)
-  "Return a browse-lines generator for PATTERN."
+(defun helm-browse-lines-make-stream (beg end pattern)
+  "Return a browse-lines stream for PATTERN."
   ;; (helm-browse-parse-pattern pattern '())
   (let* ((case-fold-search
           (pcase helm-case-fold-search
@@ -896,7 +1019,7 @@ Used as third argument of `helm-browse-hunk-gen' in
          (`("-n" ,_   ,n)
           (setq get-upper-bound (lambda () (line-end-position (string-to-number n)))))))
      (helm-browse-parse-pattern pattern '("-n")))
-    (helm-browse-hunk-gen
+    (helm-browse-hunk-stream
      beg end
      (helm-browse-lines-make-search-fun include-patterns exclude-patterns get-upper-bound))))
 
@@ -909,13 +1032,16 @@ Used as third argument of `helm-browse-hunk-gen' in
                      helm-browse-current-pos nil)
                (helm-browse-prepair-hooks))))
     (candidates . ,helm-browse-lines-cand-lister)
+    (action . (("Go there" . ,(lambda (_cand) (interactive)
+                                (with-helm-current-buffer
+                                  (goto-char helm-browse-current-pos))))))
+    (persistent-action . helm-browse-lines-goto-next-match)
     (candidate-number-limit . 2500)
     (update . helm-browse-update-function)
     (volatile) (match . identity) (nohighlight) (requires-pattern . 1)
     (no-matchplugin) (multiline)
     (real-to-display . helm-browse-default-real-to-display)
     (candidate-transformer . helm-browse-default-candidate-transformer)
-    (action . (("Go there" . helm-browse-default-goto)))
     (resume . helm-browse-resume)
     (keymap . ,helm-browse-default-map)
     (history . ,(defvar helm-browse-lines-input-history '()))
@@ -932,7 +1058,72 @@ Used as third argument of `helm-browse-hunk-gen' in
                    isearch-string
                  (regexp-quote isearch-string))))
     (isearch-exit)
-    (helm :sources helm-source-browse-lines :input input :buffer "*helm browse*")))
+    (helm :sources (if (eq isearch-regexp-function #'isearch-symbol-regexp)
+                       helm-source-browse-symbols
+                     helm-source-browse-lines)
+          :input input :buffer "*helm browse*")))
+
+(defvar helm-browse-symbols-cand-lister
+  (lambda ()
+    (with-helm-current-buffer
+      (save-excursion
+        (seq-into-sequence
+         (seq-map
+          (lambda (range)
+            (concat
+             (format "%s-%s:: " (car range) (cadr range))
+             (apply #'buffer-substring-no-properties range)))
+          (seq-take
+           (seq-filter
+            helm-browse-default-matcher
+            (stream-concatenate
+             (seq-map
+              (lambda (bounds)
+                (stream
+                 (let ((symbol-bound-list '()))
+                   (save-excursion
+                     (goto-char (car bounds))
+                     (while (search-forward-regexp "\\_<" (cadr bounds) t)
+                       (push (list (point) (search-forward-regexp "\\_>" nil t))
+                             symbol-bound-list))
+                     (nreverse symbol-bound-list)))))
+              (helm-browse-lines-make-stream ;FIXME: this is not ;exactly correct of course
+               (point-min) (point-max)
+               helm-pattern))))
+           (helm-candidate-number-limit (helm-get-current-source))))))))
+  "Candidate lister for `helm-source-browse-lines'.")
+
+(defvar helm-source-browse-symbols
+  `((name . "Browse symbols")
+    (init  (lambda ()
+             (with-helm-current-buffer
+               (setq helm-browse-orig-buffer-pos (point)
+                     helm-browse-buffer-mod-tick (buffer-chars-modified-tick)
+                     helm-browse-current-pos nil)
+               (helm-browse-prepair-hooks))))
+    (candidates . ,helm-browse-symbols-cand-lister)
+    (action . (("Go there" . ,(lambda (_cand) (interactive)
+                                (with-helm-current-buffer
+                                  (goto-char helm-browse-current-pos))))))
+    (persistent-action . helm-browse-lines-goto-next-match)
+    (candidate-number-limit . 999)
+    (update . helm-browse-update-function)
+    (volatile) (match . identity) (nohighlight) (requires-pattern . 1)
+    (no-matchplugin) (multiline)
+    (real-to-display . helm-browse-default-real-to-display)
+    (candidate-transformer . helm-browse-default-candidate-transformer)
+    (resume . helm-browse-resume)
+    (keymap . ,helm-browse-default-map)
+    (history . ,(defvar helm-browse-lines-input-history '()))
+    (cleanup . helm-browse-restore-hooks)))
+
+(defun helm-browse-symbols ()
+  "Browse symbols matching all entered regexps."
+  (interactive)
+  (helm :sources helm-source-browse-symbols :buffer "*helm browse symbols*"))
+
+;; FIXME: add sources for el-search
+
 
 (provide 'helm-browse)
 
