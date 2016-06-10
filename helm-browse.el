@@ -52,6 +52,8 @@
 (require 'thunk)
 (require 'rx)
 
+(eval-when-compile (require 'subr-x))
+
 
 ;;;; Configuration stuff
 
@@ -77,8 +79,17 @@
   ;;   (t (:background "#173719")))
   "Doc...")
 
+(defvar helm-browse-default-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map helm-map)
+    (define-key map [(control ?s)] #'helm-browse-lines-goto-next-match)
+    map))
+
 
 ;;;; underlying stuff
+
+(defvar helm-browse-current-pos 1)
+(defvar helm-browse-buffer-mod-tick nil)
 
 (defun helm-browse--search-forward-regexp (regexp &optional bound noerror count)
   "`search-forward-regexp' but respect `helm-case-fold-search' and catch `invalid-regexp' errors."
@@ -555,8 +566,6 @@ minibuffer."
         (push default alist)))
     alist))
 
-(defvar helm-browse-buffer-mod-tick nil)
-
 (defun helm-browse-resume ()
   (with-helm-buffer
     ;; (mapc 'helm-force-update--reinit (helm-get-sources))
@@ -564,17 +573,9 @@ minibuffer."
       (helm-funcall-with-source source (assoc-default 'init source)))
     (run-with-idle-timer 0 nil #'helm-update)))
 
-(defvar helm-browse-current-pos 1)
-
 (defun helm-browse-goto-next-match ()
   (interactive)
   (helm-browse-default-goto (helm-get-selection)))
-
-(defvar helm-browse-default-map
-  (let ((map (make-sparse-keymap)))
-    (set-keymap-parent map helm-map)
-    (define-key map [(control ?s)] #'helm-browse-lines-goto-next-match)
-    map))
 
 
 ;;;; The sources and user commands
@@ -694,20 +695,6 @@ minibuffer."
         (searcher (lambda () (helm-browse-search-forward-dired regexp))))
    (helm-browse-hunk-stream (point-min) (point-max) searcher)))
 
-(defun helm-browse-dired-get-cands ()
-  (with-helm-current-buffer
-    (seq-into-sequence
-     (seq-map
-      (lambda (range)
-        (concat
-         (format "%s-%s:: " (car range) (cadr range))
-         (apply #'buffer-substring-no-properties range)))
-      (seq-take
-       (seq-filter
-        helm-browse-dired-matcher
-        (helm-browse-dired-make-stream))
-       (helm-candidate-number-limit (helm-get-current-source)))))))
-
 (defvar helm-browse-dired-matcher
   (lambda (bounds)
     (save-excursion
@@ -774,6 +761,20 @@ minibuffer."
                       (push (list nil nil ".+") parsed-pattern))
                     parsed-pattern))))))
 
+(defun helm-browse-dired-get-cands ()
+  (with-helm-current-buffer
+    (seq-into-sequence
+     (seq-map
+      (lambda (range)
+        (concat
+         (format "%s-%s:: " (car range) (cadr range))
+         (apply #'buffer-substring-no-properties range)))
+      (seq-take
+       (seq-filter
+        helm-browse-dired-matcher
+        (helm-browse-dired-make-stream))
+       (helm-candidate-number-limit (helm-get-current-source)))))))
+
 (defun helm-browse-dired-mark (_cand)
   (save-excursion
     (let ((dired-marker-char (if (not helm-current-prefix-arg)
@@ -838,6 +839,8 @@ minibuffer."
 
 
 ;;;; w3m, eww
+
+(declare-function w3m-goto-next-anchor "w3m")
 
 (defvar helm-source-w3m-links
   (helm-browse-create-source
@@ -1051,18 +1054,6 @@ Used as third argument of `helm-browse-hunk-stream' in
   (interactive)
   (helm :sources helm-source-browse-lines :buffer "*helm browse*"))
 
-(defun helm-browse-buffer-from-isearch ()
-  "Invoke `helm-browse-lines' from isearch."
-  (interactive)
-  (let ((input (if isearch-regexp
-                   isearch-string
-                 (regexp-quote isearch-string))))
-    (isearch-exit)
-    (helm :sources (if (eq isearch-regexp-function #'isearch-symbol-regexp)
-                       helm-source-browse-symbols
-                     helm-source-browse-lines)
-          :input input :buffer "*helm browse*")))
-
 (defvar helm-browse-symbols-cand-lister
   (lambda ()
     (with-helm-current-buffer
@@ -1123,6 +1114,19 @@ Used as third argument of `helm-browse-hunk-stream' in
   (helm :sources helm-source-browse-symbols :buffer "*helm browse symbols*"))
 
 ;; FIXME: add sources for el-search
+
+
+(defun helm-browse-buffer-from-isearch ()
+  "Invoke `helm-browse-lines' from isearch."
+  (interactive)
+  (let ((input (if isearch-regexp
+                   isearch-string
+                 (regexp-quote isearch-string))))
+    (isearch-exit)
+    (helm :sources (if (eq isearch-regexp-function #'isearch-symbol-regexp)
+                       helm-source-browse-symbols
+                     helm-source-browse-lines)
+          :input input :buffer "*helm browse*")))
 
 
 (provide 'helm-browse)
