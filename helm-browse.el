@@ -63,7 +63,7 @@
   :prefix "helm-browse")
 
 (defface helm-browse-match
-  '((t (:inherit 'lazy-highlight)))
+  '((t (:inherit 'helm-browse-this-match)))
   "Doc...")
 
 (defface helm-browse-this-match
@@ -71,12 +71,12 @@
   "Doc...")
 
 (defface helm-browse-this-cand
-  '((((background light)) :background "gray50") ;FIXME
+  '((((background light)) :background "gray87")
     (t (:background "#202020")))
   "Doc...")
 
 (defface helm-browse-cand-region
-  '((((background light)) :background "gray50") ;FIXME
+  '((((background light)) :background "gray80")
     (t (:background "#151515")))
   "Doc...")
 
