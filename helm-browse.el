@@ -70,13 +70,14 @@
   '((t (:inherit 'isearch)))
   "Doc...")
 
-(defface helm-browse-this-cand '()
-  ;; '((t (:inherit 'helm-selection)))
+(defface helm-browse-this-cand
+  '((((background light)) :background "gray50") ;FIXME
+    (t (:background "#202020")))
   "Doc...")
 
-(defface helm-browse-cand-region '()
-  ;; '((((background light)) :background "gray50")
-  ;;   (t (:background "#173719")))
+(defface helm-browse-cand-region
+  '((((background light)) :background "gray50") ;FIXME
+    (t (:background "#151515")))
   "Doc...")
 
 (defvar helm-browse-default-map
